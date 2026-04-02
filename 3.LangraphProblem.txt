@@ -1,0 +1,643 @@
+"Problem"
+Our customer service and fraud teams are overwhelmed. We have
+thousands of transactions happening every hour. Sometimes the
+network slice drops and transactions fail; sometimes people are
+spending huge amounts of money on new devices; sometimes it's
+just normal activity. I want you to build an AI system that just looks
+at our transaction data, figures out what the 'story' is for our users,
+and sends a summarized report to the right department (IT, Fraud,
+or General Support) so they know what to focus on today. Make it
+smart.
+
+Here is sample data :
+his dataset consists of 1000 synthetic banking transactions, including a variety of transaction types such as transfers, withdrawals, and deposits. Each record contains detailed attributes like transaction ID, sender and receiver account IDs, transaction amount, timestamp, transaction status (success or failure), fraud flag, geolocation, device used, network slice ID, latency, slice bandwidth, and the associated PIN code. The dataset is designed for use in financial data analysis, fraud detection, and network performance monitoring, providing a rich set of features for machine learning applications related to transaction analysis and fraud detection.
+https://www.kaggle.com/datasets/ziya07/transaction-data-for-banking-operations
+
+Design :
+LangGraph Architecture for Transaction Analysis & Routing System
+System Overview
+This LangGraph architecture processes banking transactions in batches, identifies patterns (network issues, fraud, normal activity), generates narrative summaries, and routes reports to the appropriate department.
+
+LangGraph Architecture Diagram
+                 ┌─────────────────────┐
+                 │   START             │
+                 │  (Batch Trigger)    │
+                 └──────────┬──────────┘
+                            │
+                 ┌──────────▼──────────┐
+                 │  Data Ingestion     │
+                 │  Node               │
+                 │  - Load hourly txns │
+                 │  - Validate schema  │
+                 └──────────┬──────────┘
+                            │
+                 ┌──────────▼──────────┐
+                 │  Feature Extraction │
+                 │  Node               │
+                 │  - Compute stats    │
+                 │  - Aggregate metrics│
+                 └──────────┬──────────┘
+                            │
+                 ┌──────────▼──────────┐
+                 │  Pattern Detection  │
+                 │  Node (Parallel)    │
+                 └──────────┬──────────┘
+                            │
+           ┌────────────────┼────────────────┐
+           │                │                │
+┌──────────▼─────┐  ┌──────▼──────┐  ┌─────▼──────────┐
+│ Network Issue  │  │   Fraud     │  │ Spending       │
+│ Detector       │  │   Detector  │  │ Pattern        │
+│                │  │             │  │ Analyzer       │
+│ - Slice drops  │  │ - Fraud flag│  │ - Large amounts│
+│ - High latency │  │ - Anomalies │  │ - Device changes│
+│ - Failed txns  │  │ - Geo jumps │  │ - Velocity     │
+└────────┬───────┘  └──────┬──────┘  └─────┬──────────┘
+         │                 │                │
+         └────────────────┬┴────────────────┘
+                          │
+               ┌──────────▼──────────┐
+               │  Story Synthesis    │
+               │  Node (LLM)         │
+               │  - Correlate signals│
+               │  - Generate narrative│
+               │  - Identify root cause│
+               └──────────┬──────────┘
+                          │
+               ┌──────────▼──────────┐
+               │  Classification &   │
+               │  Routing Decision   │
+               │  Node               │
+               │  - Determine dept   │
+               │  - Set priority     │
+               └──────────┬──────────┘
+                          │
+           ┌──────────────┼──────────────┐
+           │              │              │
+┌──────────▼─────┐ ┌─────▼──────┐ ┌────▼──────────┐
+│  IT Report     │ │  Fraud     │ │  General      │
+│  Generator     │ │  Report    │ │  Support      │
+│                │ │  Generator │ │  Report Gen   │
+│ - Network data │ │ - Fraud txns││ - User queries│
+│ - Slice IDs    │ │ - Risk score││ - Volume stats│
+│ - Impact       │ │ - Patterns  ││ - Trends      │
+└────────┬───────┘ └─────┬──────┘ └────┬──────────┘
+         │               │              │
+         └───────────────┼──────────────┘
+                         │
+              ┌──────────▼──────────┐
+              │  Report Delivery    │
+              │  Node               │
+              │  - Format reports   │
+              │  - Send to dept     │
+              │  - Log & archive    │
+              └──────────┬──────────┘
+                         │
+              ┌──────────▼──────────┐
+              │  Human-in-Loop      │
+              │  (Conditional)      │
+              │  - High severity?   │
+              │  - Ambiguous case?  │
+              └──────────┬──────────┘
+                         │
+                 ┌───────┴────────┐
+                 │                │
+      ┌──────────▼─────┐   ┌─────▼──────────┐
+      │  Approve &     │   │  Feedback      │
+      │  Send          │   │  Loop          │
+      │                │   │  (Revise)      │
+      └────────┬───────┘   └─────┬──────────┘
+               │                 │
+               │                 │
+               └────────┬────────┘
+                        │
+             ┌──────────▼──────────┐
+             │      END            │
+             │  (Reports Sent)     │
+             └─────────────────────┘
+Detailed Node Specifications
+1. Data Ingestion Node
+State Schema:
+
+python
+class TransactionState(TypedDict):
+    raw_transactions: List[Dict]
+    time_window: str
+    transaction_count: int
+    validation_errors: List[str]
+Responsibilities:
+
+Fetch transactions from last hour
+Validate data schema (transaction_id, amount, status, fraud_flag, etc.)
+Handle missing/malformed data
+Pass to next node
+Output: Clean transaction dataset
+
+2. Feature Extraction Node
+State Update:
+
+python
+class FeatureState(TransactionState):
+    aggregated_metrics: Dict[str, Any]
+    # {
+    #   "total_transactions": 1000,
+    #   "failed_transactions": 45,
+    #   "failure_rate": 0.045,
+    #   "avg_amount": 2500,
+    #   "fraud_flagged": 12,
+    #   "unique_network_slices": 15,
+    #   "high_latency_count": 30,
+    #   "device_changes": 8
+    # }
+Computations:
+
+Transaction success/failure rates
+Average transaction amounts by type
+Network slice performance metrics
+Fraud flag statistics
+Geolocation anomalies
+Device usage patterns
+Latency distributions
+3. Pattern Detection Node (Parallel Execution)
+This node spawns 3 parallel sub-nodes using LangGraph's Send API:
+
+3a. Network Issue Detector
+Logic:
+
+python
+def detect_network_issues(state):
+    issues = []
+    
+    # Check slice failures
+    slice_failures = group_by_slice(state.raw_transactions)
+    for slice_id, txns in slice_failures.items():
+        failure_rate = sum(1 for t in txns if t['status'] == 'failure') / len(txns)
+        if failure_rate > 0.3:  # 30% threshold
+            issues.append({
+                "type": "slice_failure",
+                "slice_id": slice_id,
+                "failure_rate": failure_rate,
+                "affected_txns": len(txns)
+            })
+    
+    # Check high latency
+    high_latency = [t for t in state.raw_transactions if t['latency'] > 500]
+    if len(high_latency) > 50:
+        issues.append({
+            "type": "high_latency",
+            "count": len(high_latency),
+            "avg_latency": mean([t['latency'] for t in high_latency])
+        })
+    
+    return {"network_issues": issues}
+Signals:
+
+Network slice drops (failure_rate > threshold)
+High latency (> 500ms)
+Bandwidth degradation
+Correlated failures by slice_id
+3b. Fraud Detector
+Logic:
+
+python
+def detect_fraud_patterns(state):
+    fraud_signals = []
+    
+    # Explicit fraud flags
+    flagged = [t for t in state.raw_transactions if t['fraud_flag'] == True]
+    
+    # Velocity checks (same account, multiple txns)
+    account_velocity = group_by_account(state.raw_transactions)
+    for account, txns in account_velocity.items():
+        if len(txns) > 10 and time_span(txns) < 3600:  # 10+ txns in 1 hour
+            fraud_signals.append({
+                "type": "velocity_anomaly",
+                "account": account,
+                "txn_count": len(txns),
+                "total_amount": sum(t['amount'] for t in txns)
+            })
+    
+    # Geolocation jumps
+    geo_jumps = detect_impossible_travel(state.raw_transactions)
+    
+    # Large amount anomalies
+    large_txns = [t for t in state.raw_transactions 
+                  if t['amount'] > 10000 and t['device'] == 'new_device']
+    
+    return {
+        "fraud_signals": fraud_signals,
+        "flagged_transactions": flagged,
+        "geo_anomalies": geo_jumps,
+        "large_amount_txns": large_txns
+    }
+Signals:
+
+Explicit fraud_flag = True
+Transaction velocity anomalies
+Geolocation impossibilities
+Large amounts + new device
+Unusual spending patterns
+3c. Spending Pattern Analyzer
+Logic:
+
+python
+def analyze_spending_patterns(state):
+    patterns = {
+        "high_value_txns": [],
+        "device_changes": [],
+        "normal_activity": {}
+    }
+    
+    # High-value transactions
+    high_value = [t for t in state.raw_transactions if t['amount'] > 5000]
+    patterns["high_value_txns"] = high_value
+    
+    # Device changes
+    device_changes = detect_device_switches(state.raw_transactions)
+    patterns["device_changes"] = device_changes
+    
+    # Normal baseline
+    normal = [t for t in state.raw_transactions 
+              if t['status'] == 'success' 
+              and not t['fraud_flag']
+              and t['amount'] < 5000]
+    
+    patterns["normal_activity"] = {
+        "count": len(normal),
+        "avg_amount": mean([t['amount'] for t in normal]),
+        "transaction_types": Counter([t['type'] for t in normal])
+    }
+    
+    return {"spending_patterns": patterns}
+Signals:
+
+Large purchases (> $5000)
+New device usage
+Normal transaction baseline
+Spending trends
+4. Story Synthesis Node (LLM-Powered)
+State Input:
+
+python
+class AnalysisState(FeatureState):
+    network_issues: List[Dict]
+    fraud_signals: List[Dict]
+    spending_patterns: Dict
+LLM Prompt:
+
+You are analyzing banking transaction data from the last hour.
+ 
+TRANSACTION SUMMARY:
+- Total transactions: {transaction_count}
+- Failed transactions: {failed_count} ({failure_rate}%)
+- Fraud-flagged: {fraud_count}
+ 
+DETECTED ISSUES:
+Network Issues:
+{network_issues}
+ 
+Fraud Signals:
+{fraud_signals}
+ 
+Spending Patterns:
+{spending_patterns}
+ 
+TASK:
+1. Identify the PRIMARY story/pattern in this data
+2. Explain the root cause if identifiable
+3. Assess the business impact (high/medium/low)
+4. Provide a concise narrative summary (3-5 sentences)
+5. Recommend which department should handle this: IT, Fraud, or General Support
+ 
+Output JSON format:
+{
+  "primary_story": "string",
+  "root_cause": "string",
+  "impact_level": "high|medium|low",
+  "narrative": "string",
+  "affected_users": number,
+  "recommended_department": "IT|Fraud|General Support",
+  "confidence": 0.0-1.0
+}
+Output: Structured story with routing recommendation
+
+5. Classification & Routing Decision Node
+Logic:
+
+python
+def route_decision(state):
+    story = state['story_synthesis']
+    
+    # Rule-based overrides
+    if len(state['network_issues']) > 0 and story['impact_level'] == 'high':
+        department = "IT"
+        priority = "P1"
+    elif len(state['fraud_signals']) > 5:
+        department = "Fraud"
+        priority = "P1" if story['confidence'] > 0.8 else "P2"
+    elif story['recommended_department'] == "General Support":
+        department = "General Support"
+        priority = "P3"
+    else:
+        department = story['recommended_department']
+        priority = "P2"
+    
+    # Human-in-loop trigger
+    needs_review = (
+        story['confidence'] < 0.7 or
+        story['impact_level'] == 'high' or
+        len(state['fraud_signals']) > 10
+    )
+    
+    return {
+        "target_department": department,
+        "priority": priority,
+        "needs_human_review": needs_review
+    }
+Routing Logic:
+
+IT: Network slice failures, high latency, infrastructure issues
+Fraud: Fraud flags, velocity anomalies, geo jumps
+General Support: Normal activity spikes, customer queries, trends
+6. Report Generator Nodes (Conditional)
+Each department gets a specialized report:
+
+IT Report
+python
+def generate_it_report(state):
+    return {
+        "report": {
+            "title": "Network Performance Alert",
+            "summary": state['story_synthesis']['narrative'],
+            "affected_slices": [issue['slice_id'] for issue in state['network_issues']],
+            "failure_rate": state['aggregated_metrics']['failure_rate'],
+            "latency_stats": {...},
+            "recommended_actions": [
+                "Investigate slice {slice_id}",
+                "Check bandwidth allocation",
+                "Review network logs"
+            ],
+            "priority": state['priority']
+        }
+    }
+Fraud Report
+python
+def generate_fraud_report(state):
+    return {
+        "report": {
+            "title": "Fraud Detection Alert",
+            "summary": state['story_synthesis']['narrative'],
+            "flagged_transactions": state['fraud_signals'],
+            "risk_score": calculate_risk_score(state),
+            "suspicious_accounts": [...],
+            "recommended_actions": [
+                "Review flagged accounts",
+                "Contact users for verification",
+                "Freeze high-risk transactions"
+            ],
+            "priority": state['priority']
+        }
+    }
+General Support Report
+python
+def generate_support_report(state):
+    return {
+        "report": {
+            "title": "Daily Transaction Summary",
+            "summary": state['story_synthesis']['narrative'],
+            "transaction_volume": state['transaction_count'],
+            "trends": {...},
+            "user_activity": {...},
+            "recommended_actions": [
+                "Monitor for customer inquiries",
+                "Prepare FAQ responses"
+            ],
+            "priority": state['priority']
+        }
+    }
+7. Report Delivery Node
+Responsibilities:
+
+Format reports (email, Slack, dashboard)
+Send to appropriate department
+Log to database
+Archive for audit trail
+8. Human-in-Loop Node (Conditional)
+Trigger Conditions:
+
+Confidence < 0.7
+Impact level = high
+Fraud signals > 10
+Ambiguous classification
+Actions:
+
+Send to human reviewer
+Wait for approval/modification
+Loop back to report generation if revised
+LangGraph Implementation Code
+python
+from langgraph.graph import StateGraph, END
+from typing import TypedDict, List, Dict, Annotated
+import operator
+ 
+# State definition
+class TransactionAnalysisState(TypedDict):
+    raw_transactions: List[Dict]
+    aggregated_metrics: Dict
+    network_issues: Annotated[List[Dict], operator.add]
+    fraud_signals: Annotated[List[Dict], operator.add]
+    spending_patterns: Dict
+    story_synthesis: Dict
+    target_department: str
+    priority: str
+    needs_human_review: bool
+    report: Dict
+    approved: bool
+ 
+# Node functions
+def ingest_data(state):
+    # Load transactions
+    transactions = fetch_hourly_transactions()
+    return {"raw_transactions": transactions, "transaction_count": len(transactions)}
+ 
+def extract_features(state):
+    metrics = compute_aggregated_metrics(state['raw_transactions'])
+    return {"aggregated_metrics": metrics}
+ 
+def detect_network_issues(state):
+    issues = analyze_network_patterns(state['raw_transactions'])
+    return {"network_issues": issues}
+ 
+def detect_fraud(state):
+    signals = analyze_fraud_patterns(state['raw_transactions'])
+    return {"fraud_signals": signals}
+ 
+def analyze_spending(state):
+    patterns = analyze_spending_patterns(state['raw_transactions'])
+    return {"spending_patterns": patterns}
+ 
+def synthesize_story(state):
+    # LLM call
+    story = llm_generate_narrative(state)
+    return {"story_synthesis": story}
+ 
+def route_decision(state):
+    decision = classify_and_route(state)
+    return decision
+ 
+def generate_report(state):
+    dept = state['target_department']
+    if dept == "IT":
+        report = generate_it_report(state)
+    elif dept == "Fraud":
+        report = generate_fraud_report(state)
+    else:
+        report = generate_support_report(state)
+    return {"report": report}
+ 
+def deliver_report(state):
+    send_to_department(state['target_department'], state['report'])
+    return {"approved": True}
+ 
+def human_review(state):
+    # Wait for human input
+    approval = request_human_approval(state['report'])
+    return {"approved": approval}
+ 
+# Conditional edges
+def should_review(state):
+    return "review" if state['needs_human_review'] else "deliver"
+ 
+def after_review(state):
+    return "deliver" if state['approved'] else "regenerate"
+ 
+# Build graph
+workflow = StateGraph(TransactionAnalysisState)
+ 
+# Add nodes
+workflow.add_node("ingest", ingest_data)
+workflow.add_node("extract", extract_features)
+workflow.add_node("detect_network", detect_network_issues)
+workflow.add_node("detect_fraud", detect_fraud)
+workflow.add_node("analyze_spending", analyze_spending)
+workflow.add_node("synthesize", synthesize_story)
+workflow.add_node("route", route_decision)
+workflow.add_node("generate", generate_report)
+workflow.add_node("review", human_review)
+workflow.add_node("deliver", deliver_report)
+ 
+# Add edges
+workflow.set_entry_point("ingest")
+workflow.add_edge("ingest", "extract")
+ 
+# Parallel pattern detection
+workflow.add_edge("extract", "detect_network")
+workflow.add_edge("extract", "detect_fraud")
+workflow.add_edge("extract", "analyze_spending")
+ 
+# Converge to synthesis
+workflow.add_edge("detect_network", "synthesize")
+workflow.add_edge("detect_fraud", "synthesize")
+workflow.add_edge("analyze_spending", "synthesize")
+ 
+workflow.add_edge("synthesize", "route")
+workflow.add_edge("route", "generate")
+ 
+# Conditional human review
+workflow.add_conditional_edges(
+    "generate",
+    should_review,
+    {
+        "review": "review",
+        "deliver": "deliver"
+    }
+)
+ 
+workflow.add_conditional_edges(
+    "review",
+    after_review,
+    {
+        "deliver": "deliver",
+        "regenerate": "generate"
+    }
+)
+ 
+workflow.add_edge("deliver", END)
+ 
+# Compile
+app = workflow.compile()
+Key Features of This Architecture
+1. Parallel Processing
+Network, fraud, and spending analysis run simultaneously
+Reduces latency for large transaction volumes
+2. Smart Routing
+Rule-based + LLM-based classification
+Ensures reports go to the right team
+3. Human-in-Loop
+High-stakes decisions get human review
+Prevents false positives in fraud detection
+4. Narrative Generation
+LLM synthesizes technical signals into business stories
+Makes reports actionable for non-technical teams
+5. Checkpointing
+LangGraph's built-in state persistence
+Can resume if system fails mid-analysis
+6. Scalability
+Batch processing (hourly)
+Can be triggered on-demand for real-time alerts
+Example Execution Flow
+Scenario: Network Slice Failure
+
+Ingest: 1000 transactions, 150 failures
+Extract: Failure rate = 15%, concentrated in slice_id = "5G_SLICE_03"
+Detect Network: Identifies slice_03 has 80% failure rate
+Detect Fraud: No significant fraud signals
+Analyze Spending: Normal patterns
+Synthesize: "Network slice 5G_SLICE_03 experienced severe degradation, causing 120 transaction failures in the last hour. Impact: High. Estimated 500 affected users."
+Route: Department = IT, Priority = P1, Review = True
+Generate: IT report with slice details, latency graphs
+Review: Human approves
+Deliver: Email sent to IT team with actionable data
+This LangGraph architecture provides an intelligent, automated system that transforms raw transaction data into actionable insights, ensuring the right teams focus on the right problems.
+
+I've provided a comprehensive LangGraph architecture for your transaction monitoring and routing system. The design includes:
+
+Summary
+Architecture Components:
+
+9 specialized nodes handling ingestion, feature extraction, parallel pattern detection, story synthesis, routing, report generation, and delivery
+Parallel processing for network, fraud, and spending analysis
+LLM-powered narrative generation to create actionable "stories" from raw data
+Smart routing logic that sends reports to IT, Fraud, or General Support based on detected patterns
+Human-in-loop for high-stakes decisions
+Key Capabilities:
+
+Network Issue Detection: Identifies slice failures, high latency, bandwidth problems
+Fraud Detection: Catches velocity anomalies, geo-location jumps, suspicious patterns
+Spending Analysis: Tracks large purchases, device changes, normal baselines
+Intelligent Routing: Rule-based + LLM classification ensures correct department assignment
+Conditional Review: High-severity or ambiguous cases get human approval
+Sample Data Utilization: The architecture leverages all fields in your dataset:
+
+transaction_id, amount, status → Core metrics
+fraud_flag → Explicit fraud detection
+network_slice_id, latency, slice_bandwidth → Network performance
+geolocation, device → Anomaly detection
+timestamp → Velocity analysis
+pin_code → Geographic clustering
+The system processes transactions hourly, generates department-specific reports, and ensures your teams focus on what matters most.
+
+Feedback submitted
+
+
+
+
+Command Awaiting Approval
+
+
+
+
+
+
+
+Drop to add to Cascade
